@@ -1,0 +1,201 @@
+#!/usr/bin/env ruby
+
+
+#
+# soma - SomaFM command line.
+# 
+# 2014-10-05
+# bgraf <bgraf@uos.de>
+#
+# v0.0.1:
+#   2014-10-05
+#   - channel list storage at .somachans
+#   - commands: update, list
+#   - playing via mplayer
+#   
+#   2014-10-06
+#   - playing via `mpv`
+#
+# todo:
+#   - configuration
+#   - default channel
+#   - song history
+#
+
+
+require 'rexml/document'
+require 'net/http'
+
+
+CHANNEL_FILENAME = ".somachans"
+SOMA_CHANNEL_URL = "http://somafm.com/channels.xml"
+SOMA_SONGS_URL   = "http://somafm.com/songs"
+UPDATE_INTERVAL  = 30 #seconds
+
+
+def channels_of_xml(data)
+  doc = REXML::Document.new data
+
+  channels = {}
+  doc.elements.each('channels/channel') do |elt|
+    hash = {}
+    elt.elements.each do |attr|
+      hash[attr.name] = attr.text
+    end
+    id = elt.attributes.to_hash["id"]
+    hash["id"] = id
+    channels[id] = hash
+  end
+  channels
+end
+
+
+def songs_of_xml(data)
+  doc = REXML::Document.new data
+
+  songs = []
+  doc.elements.each('songs/song') do |elt|
+    hash = {}
+    elt.elements.each do |attr|
+      hash[attr.name] = attr.text
+    end
+    songs << hash
+  end
+  songs
+end
+
+
+def http_get(url)
+  Net::HTTP.get_response(URI.parse(url)).body
+end
+
+
+def print_usage_and_exit
+  ["Usage: soma <channel> - play station",
+   "       soma list      - show list of channels",
+   "       soma update    - fetch channel list"
+  ].each {|e| puts e }
+  exit 0
+end
+
+
+def channel_filepath
+  path = File.join(Dir::home, CHANNEL_FILENAME)
+end
+
+
+def update_channels
+  print "Loading channel list from #{SOMA_CHANNEL_URL}... "
+  data = http_get SOMA_CHANNEL_URL
+  File.open(channel_filepath, 'w') {|f| f.write(data) }
+  puts "done."
+end
+
+
+def read_channels
+  path = channel_filepath
+  if File.exist? channel_filepath then
+    data = File.new(path).read
+    channels_of_xml(data)
+  else
+    puts "Error: channel file at '#{path}' doesn't exist."
+    print_usage_and_exit
+  end
+end
+
+
+def update_songs(id)
+  url = "#{SOMA_SONGS_URL}/#{id}.xml"
+  http_get url
+end
+
+
+def print_song(song)
+  puts Time.at(song["date"].to_i).to_s
+  puts " Title:  #{song["title"]}"
+  puts " Artist: #{song["artist"]}"
+  puts " Album:  #{song["album"]}"
+  puts ""
+end
+
+
+def print_songs_since(songs, time)
+  songs.select{|e| e["date"].to_i > time}.reverse_each do |e|
+    print_song e
+  end
+
+end
+
+
+def loop_songprint(chan)
+  id = chan["id"]
+  start_time = 0
+  while true do
+    data = update_songs(id)
+    songs = songs_of_xml(data)
+    if start_time == 0 then
+      print_song songs[0]
+    else
+      print_songs_since(songs, start_time)
+    end
+    start_time = songs[0]["date"].to_i
+
+    sleep UPDATE_INTERVAL
+  end
+end
+
+
+def start_player(chan)
+  pls = chan["highestpls"]
+      
+  mplayer_pid = spawn("mpv -playlist #{pls}", :out=>"/dev/null",:err=>"/dev/null")
+  Process.detach(mplayer_pid)
+  trap "SIGINT" do
+    Process.kill(:SIGTERM, mplayer_pid) if mplayer_pid != nil
+    puts "Bye.."
+    exit 0
+  end
+
+  loop_songprint(chan)
+end
+
+
+def play_channel(name)
+  channels = read_channels
+  
+  if channels.key? name then
+    start_player channels[name]
+  else
+    puts "Error: no such channel '#{name}'."
+    print_usage_and_exit
+  end
+end
+
+
+def list_channels
+  channels = read_channels
+  
+  channels.keys.sort.each do |id| 
+    puts "#{id.ljust(15)} #{channels[id]["title"].ljust(25)} #{channels[id]["description"]}"
+  end
+end
+
+
+def main
+  print_usage_and_exit if ARGV.empty? || ARGV.length > 1
+
+  param = ARGV[0]
+
+  if param == "update" then
+    update_channels
+  elsif param == "list" then
+    list_channels
+  else
+    play_channel param
+  end
+end
+
+
+if __FILE__ == $0 then
+  main
+end

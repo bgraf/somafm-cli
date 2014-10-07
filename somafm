@@ -13,6 +13,7 @@ require 'rexml/document'
 require 'net/http'
 
 
+SOMA_COMPLETION   = ".somacomplete"
 CHANNEL_FILENAME  = ".somachans"
 SOMA_CHANNEL_URL  = "http://somafm.com/channels.xml"
 SOMA_SONGS_URL    = "http://somafm.com/songs"
@@ -91,10 +92,32 @@ def channel_filepath
 end
 
 
+def generate_completion(channels)
+  ids = channels.keys
+  File.open(File.join(Dir::home, SOMA_COMPLETION), 'w') do |f|
+    f.write(
+     ["_somafm()",
+      "{",
+      "local cur",
+      "COMPREPLY=()",
+      "cur=${COMP_WORDS[$COMP_CWORD]}",
+      "COMPREPLY=( $( compgen -W 'list update #{ids.join(' ')}' -- $cur ) )",
+      "return 0",
+      "}",
+      "complete -F _somafm somafm"
+     ].join("\n")
+   )
+  end
+end
+
+
 def update_channels
   print "Loading channel list from #{SOMA_CHANNEL_URL}... "
   data = http_get SOMA_CHANNEL_URL
   File.open(channel_filepath, 'w') {|f| f.write(data) }
+  puts "done."
+  print "Generating bash completion file #{SOMA_COMPLETION}... "
+  generate_completion(channels_of_xml(data))
   puts "done."
 end
 

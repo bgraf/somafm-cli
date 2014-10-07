@@ -2,24 +2,10 @@
 
 
 #
-# soma - SomaFM command line.
+# somafm-cli - Commandline wrapper for playing SomaFM channels using mpv
 # 
-# 2014-10-05
+# version 0.0.1
 # bgraf <bgraf@uos.de>
-#
-# v0.0.1:
-#   2014-10-05
-#   - channel list storage at .somachans
-#   - commands: update, list
-#   - playing via mplayer
-#   
-#   2014-10-06
-#   - playing via `mpv`
-#
-# todo:
-#   - configuration
-#   - default channel
-#   - song history
 #
 
 
@@ -27,10 +13,25 @@ require 'rexml/document'
 require 'net/http'
 
 
-CHANNEL_FILENAME = ".somachans"
-SOMA_CHANNEL_URL = "http://somafm.com/channels.xml"
-SOMA_SONGS_URL   = "http://somafm.com/songs"
-UPDATE_INTERVAL  = 30 #seconds
+CHANNEL_FILENAME  = ".somachans"
+SOMA_CHANNEL_URL  = "http://somafm.com/channels.xml"
+SOMA_SONGS_URL    = "http://somafm.com/songs"
+UPDATE_INTERVAL   = 30 #seconds
+PLAYLIST_QUALITY  = {"highest" => 2,
+                     "fast"    => 1,
+                     "slow"    => 0}
+PLAYLIST_FORMAT   = {"mp3"     => 2,
+                     "aac"     => 1,
+                     "aacp"    => 1}
+
+
+def sort_playlists(playlists)
+  playlists.sort_by do |elem|
+    quality, format, _ = elem
+    0 - (10 * (PLAYLIST_QUALITY[quality] || 0)
+        + (PLAYLIST_FORMAT[format] || 0))
+  end
+end
 
 
 def channels_of_xml(data)
@@ -39,11 +40,17 @@ def channels_of_xml(data)
   channels = {}
   doc.elements.each('channels/channel') do |elt|
     hash = {}
+    playlists = []
     elt.elements.each do |attr|
-      hash[attr.name] = attr.text
+      if PLAYLIST_QUALITY.key? attr.name[0..-4] then
+        playlists << [attr.name[0..-4], attr.attributes["format"], attr.text]
+      else
+        hash[attr.name] = attr.text
+      end
     end
-    id = elt.attributes.to_hash["id"]
+    id = elt.attributes["id"]
     hash["id"] = id
+    hash["playlists"] = sort_playlists(playlists)
     channels[id] = hash
   end
   channels
@@ -71,7 +78,7 @@ end
 
 
 def print_usage_and_exit
-  ["Usage: soma <channel> - play station",
+  ["Usage: soma <channel> - play channel",
    "       soma list      - show list of channels",
    "       soma update    - fetch channel list"
   ].each {|e| puts e }
@@ -146,8 +153,8 @@ end
 
 
 def start_player(chan)
-  pls = chan["highestpls"]
-      
+  _,_,pls = chan["playlists"][0]
+
   mplayer_pid = spawn("mpv -playlist #{pls}", :out=>"/dev/null",:err=>"/dev/null")
   Process.detach(mplayer_pid)
   trap "SIGINT" do
@@ -162,7 +169,7 @@ end
 
 def play_channel(name)
   channels = read_channels
-  
+
   if channels.key? name then
     start_player channels[name]
   else

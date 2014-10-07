@@ -3,9 +3,9 @@ somafm-cli
 
 SomaFM command line.   
 Small ruby wrapper around `mpv` to play [SomaFM](http://somafm.com) radio stations.   
-Saves channel list in `~/.somachans`.
-Saves bash completion file in `~./somacomplete`.
-`$ source ~/.somacomplete` for channel completion.
+Saves channel list in `~/.somachans`.   
+Saves bash completion file in `~./somacomplete`.   
+`$ source ~/.somacomplete` for channel completion.   
 
 ### Usage
 

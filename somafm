@@ -54,7 +54,7 @@ def sort_playlists(playlists)
 end
 
 
-def channels_of_xml(data)
+def channels_from_xml(data)
   doc = REXML::Document.new data
 
   channels = {}
@@ -77,7 +77,7 @@ def channels_of_xml(data)
 end
 
 
-def songs_of_xml(data)
+def songs_from_xml(data)
   doc = REXML::Document.new data
 
   songs = []
@@ -145,7 +145,7 @@ def cmd_update
   puts "Loading channel list from #{SOMA_CHANNEL_URL}... "
   data = http_get SOMA_CHANNEL_URL
   File.open(cache_path(CHANNEL_FILE), 'w') {|f| f.write(data) }
-  generate_bash_completion(channels_of_xml(data))
+  generate_bash_completion(channels_from_xml(data))
 end
 
 
@@ -156,7 +156,7 @@ def read_channels
 	cmd_update
   end
   data = File.new(file).read
-  channels_of_xml(data)
+  channels_from_xml(data)
 end
 
 
@@ -188,7 +188,7 @@ def loop_songprint(chan)
   start_time = 0
   while true do
     data = update_songs(id)
-    songs = songs_of_xml(data)
+    songs = songs_from_xml(data)
     if start_time == 0 then
       print_song songs[0]
     else
@@ -217,19 +217,14 @@ end
 
 
 def cmd_play
-  name = ARGV[1]
+  name = ARGV[1] || @config["defchan"]
   channels = read_channels
-
-  if name == nil then
-    name = @config["defchan"]
-  end
 
   if channels.key? name then
     start_player channels[name]
   else
     puts "Error: no such channel '#{name}'."
-	puts "Try setting a default channel using somafm set defchan <name>"
-    print_usage_and_exit
+    puts "Try setting a default channel using somafm set defchan <name>"
   end
 end
 
@@ -257,6 +252,7 @@ end
 
 
 def cmd_get
+  puts "#{NAME} current configuration settings:"
   @config.each do |key,value|
     puts "#{key} = #{value}"
   end

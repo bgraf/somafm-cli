@@ -14,9 +14,10 @@ require 'net/http'
 require 'pp'
 require 'yaml'
 
-SOMA_COMPLETION   = ".somacomplete"
-SOMA_CONFIGFILE   = ".somaconf"
-CHANNEL_FILENAME  = ".somachans"
+NAME = "somafm-cli" # name for config and cache subdirectories
+CONFIG_DIR = ENV["XDG_CONFIG_HOME"] || File::join(ENV["HOME"], ".config")
+CACHE_DIR = ENV["XDG_CACHE_HOME"] || File::join(ENV["HOME"], ".cache")
+CMDS = [ :get, :set, :list, :update, :play ]
 SOMA_CHANNEL_URL  = "http://somafm.com/channels.xml"
 SOMA_SONGS_URL    = "http://somafm.com/songs"
 UPDATE_INTERVAL   = 30 #seconds
@@ -29,9 +30,17 @@ PLAYLIST_FORMAT   = {"mp3"     => 2,
 
 
 @config =
-  { :default_channel => nil,
-    :player_command  => 'mpv -playlist %s'
+  { :defchan => nil,
+    :playcmd  => 'mpv -playlist %s'
   }
+
+
+def config_path(filename)
+  File::join(File::join(CONFIG_DIR, NAME), filename))
+
+
+def cache_path(filename)
+  File::join(File::join(CACHE_DIR, NAME), filename)
 
 
 def sort_playlists(playlists)
@@ -87,34 +96,45 @@ end
 
 
 def print_usage_and_exit
-  ["Usage: soma <channel> - play channel",
-   "       soma list      - show list of channels",
-   "       soma update    - fetch channel list"
+  ["Usage: somafm play <name>     - play channel <name>",
+   "       somafm list            - show available channels",
+   "       somafm update          - manually update channel list",
+   "       somafm set <key> <val> - change setting of config variable <key>",
+   "       somafm get             - show current configuration settings"
   ].each {|e| puts e }
   exit 0
 end
 
 
-def channel_filepath
-  path = File.join(Dir::home, CHANNEL_FILENAME)
-end
-
-
-def generate_completion(channels)
+def generate_bash_completion(channels)
   ids = channels.keys
-  File.open(File.join(Dir::home, SOMA_COMPLETION), 'w') do |f|
+  File.open(cache_path("bash-completion")), 'w')) do |f|
     f.write(
      ["_somafm()",
       "{",
-      "local cur",
+      "local cur prev",
       "COMPREPLY=()",
       "cur=${COMP_WORDS[$COMP_CWORD]}",
-      "COMPREPLY=( $( compgen -W 'list update #{ids.join(' ')}' -- $cur ) )",
+	  "prev=${COMP_WORDS[COMP_CWORD-1]}",
+	  "cmds='update list play set get'",
+	  "case \"${prev}\" in",
+	  "    play)",
+	  "        COMPREPLY=( $(compgen -W #{ids.join(' ')} -- ${cur}) )",
+	  "        return 0",
+	  "        ;;",
+	  "    set)",
+	  "        COMPREPLY=( $(compgen -W #{config.keys} -- ${cur}) )",
+	  "        return 0",
+	  "        ;;",
+	  "    *)",
+	  "    ;;",
+	  "esac",
+      "COMPREPLY=( $( compgen -W \"${cmds}\" -- $cur ) )",
       "return 0",
       "}",
       "complete -F _somafm somafm"
      ].join("\n")
-   )
+	r)
   end
 end
 
@@ -122,23 +142,19 @@ end
 def update_channels
   print "Loading channel list from #{SOMA_CHANNEL_URL}... "
   data = http_get SOMA_CHANNEL_URL
-  File.open(channel_filepath, 'w') {|f| f.write(data) }
-  puts "done."
-  print "Generating bash completion file #{SOMA_COMPLETION}... "
-  generate_completion(channels_of_xml(data))
-  puts "done."
+  File.open(cache_path("channels", 'w') {|f| f.write(data) }
+  generate_bash_completion(channels_of_xml(data))
 end
 
 
 def read_channels
-  path = channel_filepath
-  if File.exist? channel_filepath then
-    data = File.new(path).read
-    channels_of_xml(data)
-  else
-    puts "Error: channel file at '#{path}' doesn't exist."
-    print_usage_and_exit
+  file = cache_path("channels")
+  if not File.exist? file then
+    print "Channel list not found, updating ... "
+	update_channels
   end
+  data = File.new(path).read
+  channels_of_xml(data)
 end
 
 
@@ -186,7 +202,7 @@ end
 def start_player(chan)
   _,_,pls = chan["playlists"][0]
 
-  pid = spawn(sprintf(@config[:player_command], pls), :out=>"/dev/null",:err=>"/dev/null")
+  pid = spawn(sprintf(@config[:playcmd], pls), :out=>"/dev/null",:err=>"/dev/null")
   Process.detach(pid)
   trap "SIGINT" do
     Process.kill(:SIGTERM, pid) if pid != nil
@@ -198,7 +214,8 @@ def start_player(chan)
 end
 
 
-def play_channel(name)
+def cmd_play
+  name = ARGV[1]
   channels = read_channels
 
   if channels.key? name then
@@ -210,7 +227,7 @@ def play_channel(name)
 end
 
 
-def list_channels
+def cmd_list
   channels = read_channels
 
   channels.keys.sort.each do |id|
@@ -219,38 +236,54 @@ def list_channels
 end
 
 
-def read_config
-  path = File::join(Dir::home, SOMA_CONFIGFILE)
-  if File::exists? path then
-    data = File.open(File::join(Dir::home, SOMA_CONFIGFILE)).read
-    cfg = YAML.load(data)
-    @config.merge! cfg
-  else
-    File.open(path, 'w') {|f| f.write(YAML.dump @config)}
+def cmd_set
+  key = ARGV[1]
+  value = ARGV[2]
+  if key not nil and value not nil:
+    if key in @config then
+	  @config[key] = value
+	  return
+	end
+  end
+  print "Not a valid setting, aborting."
+end
+
+
+def cmd_get
+  @config.each do |setting|
+    puts "#{setting.key} = #{setting.value}"
   end
 end
 
 
-def main
-  print_usage_and_exit if ARGV.length > 1
-
-  param = ARGV[0]
-
-  read_config
-
-  if param == "update" then
-    update_channels
-  elsif param == "list" then
-    list_channels
-  else
-    if param == nil then
-      print_usage_and_exit if @config[:default_channel] == nil
-      param = @config[:default_channel]
-      puts "Playing default channel '#{param}'"
-    end
-    play_channel param
+def load_config
+  path = config_path(CONFIG_FILE)
+  if File::exists? path then
+    data = File.open(path).read
+    cfg = YAML.load(data)
+    @config.merge! cfg
   end
-  print_usage_and_exit
+end
+
+
+def save_config
+  path = config_path(CONFIG_FILE)
+  File.open(path, 'w') {|f| f.write(YAML.dump @config)}
+end
+
+
+def main
+  load_config
+  
+  cmd = ARGV[0]
+  if cmd == nil or cmd not in CMDS then
+    print_usage_and_exit
+  else
+	handler = "cmd_#{cmd}"
+	self.send(handler)
+  end
+
+  save_config
 end
 
 

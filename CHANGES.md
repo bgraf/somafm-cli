@@ -13,3 +13,6 @@ somafm-cli change log
 - 2014-10-07
     - Added analysis and order of playlists.
     - Added bash channel completion.
+
+- 2014-10-08
+    - YAML config file. `~/.somaconf`

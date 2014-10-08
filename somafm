@@ -3,7 +3,7 @@
 
 #
 # somafm-cli - Commandline wrapper for playing SomaFM channels using mpv
-# 
+#
 # version 0.0.1
 # bgraf <bgraf@uos.de>
 #
@@ -11,9 +11,11 @@
 
 require 'rexml/document'
 require 'net/http'
-
+require 'pp'
+require 'yaml'
 
 SOMA_COMPLETION   = ".somacomplete"
+SOMA_CONFIGFILE   = ".somaconf"
 CHANNEL_FILENAME  = ".somachans"
 SOMA_CHANNEL_URL  = "http://somafm.com/channels.xml"
 SOMA_SONGS_URL    = "http://somafm.com/songs"
@@ -24,6 +26,12 @@ PLAYLIST_QUALITY  = {"highest" => 2,
 PLAYLIST_FORMAT   = {"mp3"     => 2,
                      "aac"     => 1,
                      "aacp"    => 1}
+
+
+@config =
+  { :default_channel => nil,
+    :player_command  => 'mpv -playlist %s'
+  }
 
 
 def sort_playlists(playlists)
@@ -178,10 +186,10 @@ end
 def start_player(chan)
   _,_,pls = chan["playlists"][0]
 
-  mplayer_pid = spawn("mpv -playlist #{pls}", :out=>"/dev/null",:err=>"/dev/null")
-  Process.detach(mplayer_pid)
+  pid = spawn(sprintf(@config[:player_command], pls), :out=>"/dev/null",:err=>"/dev/null")
+  Process.detach(pid)
   trap "SIGINT" do
-    Process.kill(:SIGTERM, mplayer_pid) if mplayer_pid != nil
+    Process.kill(:SIGTERM, pid) if pid != nil
     puts "Bye.."
     exit 0
   end
@@ -204,25 +212,45 @@ end
 
 def list_channels
   channels = read_channels
-  
-  channels.keys.sort.each do |id| 
+
+  channels.keys.sort.each do |id|
     puts "#{id.ljust(15)} #{channels[id]["title"].ljust(25)} #{channels[id]["description"]}"
   end
 end
 
 
+def read_config
+  path = File::join(Dir::home, SOMA_CONFIGFILE)
+  if File::exists? path then
+    data = File.open(File::join(Dir::home, SOMA_CONFIGFILE)).read
+    cfg = YAML.load(data)
+    @config.merge! cfg
+  else
+    File.open(path, 'w') {|f| f.write(YAML.dump @config)}
+  end
+end
+
+
 def main
-  print_usage_and_exit if ARGV.empty? || ARGV.length > 1
+  print_usage_and_exit if ARGV.length > 1
 
   param = ARGV[0]
+
+  read_config
 
   if param == "update" then
     update_channels
   elsif param == "list" then
     list_channels
   else
+    if param == nil then
+      print_usage_and_exit if @config[:default_channel] == nil
+      param = @config[:default_channel]
+      puts "Playing default channel '#{param}'"
+    end
     play_channel param
   end
+  print_usage_and_exit
 end
 
 
